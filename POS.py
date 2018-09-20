@@ -46,7 +46,7 @@ pos_column = series_of_words[130000:135000].apply(get_pos)
 df_words = pd.DataFrame({"words": series_of_words[130000:135000], "pos": pos_column})
 
 print(df_words)
-#df_words.to_csv("pos_tagged_words_30000.csv", header = True, encoding = "utf-8-sig")
+
 
 #Loading the words with pos-tagging to SQL-Database
 conn = sqlite3.connect("full_table.db")
