@@ -25,7 +25,7 @@ def extract_words(series):
 series_of_words = series_of_words_unparsed.apply(extract_words)
 
 def get_pos(word):
-    '''function to get the part of speech of words'''
+    '''function to get the part of speech of words from duden'''
     while True:
         try:
             w = duden.get(word)
@@ -41,25 +41,26 @@ def get_pos(word):
                 except:
                     return "word not found"
 
-
+#Applying the function, getting part-of-speech tags
 pos_column = series_of_words[130000:135000].apply(get_pos)
+
+#Creating a dataFrame with words and their part-of-speech tag
 df_words = pd.DataFrame({"words": series_of_words[130000:135000], "pos": pos_column})
 
 print(df_words)
-
 
 #Loading the words with pos-tagging to SQL-Database
 conn = sqlite3.connect("full_table.db")
 c = conn.cursor()
 #c.execute("""CREATE TABLE all_words ( words text pos text)""")
-
 df_words.to_sql("all_words", conn, if_exists="append")
 conn.commit()
-print(pd.read_sql_query("select * from all_words;", conn))
+
+print(pd.read_sql_query("select * from all_words;", conn)) #checking new entries
 
 conn.close()
 
-print(datetime.now() - startTime)
+print(datetime.now() - startTime) #keeping track on processing time
 
 
 
