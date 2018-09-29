@@ -1,72 +1,24 @@
 import pandas as pd
+import numpy as np
 import sqlite3
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.model_selection import train_test_split
+from scipy.sparse import csr_matrix
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import LinearSVC
+from datetime import datetime
 
-#Opening connection to the sql database with all scrapped words + POS and loading as a DataFrame
+# Opening connection to the sql database with all scrapped words + POS and loading as a DataFrame
 conn = sqlite3.connect("full_table.db")
 c = conn.cursor()
-df = pd.read_sql_query("select * from all_words;", conn)
+df = pd.read_sql_query("select * from cleaned_all_words;", conn)
 conn.close()
 
-#Removing duplicates if exist
-df = df.drop_duplicates(subset = "words", keep = "first")
+print(df)
 
-#Cleaning entries
-def remove_brackets(entry):
-    '''removing brackts from some entries to provide homogenity of all entries and splitting several POS in two columns'''
-    if entry != None:
-        new = entry.strip("[]")
-        if (entry != new) and (new != "'word not found'"):
-            new = new.split(', ', 1)
-            return new
-        else:
-            return [new]
-    else:
-        return ["word not found"]
 
-new_pos = df["pos"].apply(remove_brackets)
-
-#Creating a DataFrame with two columns for POS
-new_pos = pd.DataFrame(new_pos.values.tolist(), columns=['pos1','pos2'])
-
-def remove_quotes(entry):
-    '''removes quotes from some entries for homogenity'''
-    if entry != None:
-        new = entry.strip("''")
-        return new
-    else:
-        return "no second POS"
-
-#Creating a DataFrame with colmns pos1, pos2, words
-full_table = pd.DataFrame(dict(pos1 = new_pos["pos1"].apply(remove_quotes), pos2 = new_pos["pos2"].apply(remove_quotes), words = df["words"])).reset_index()
-
-#Filtering for the not-found-words
-not_found_words = full_table.loc[full_table["pos1"] == "word not found"]
-
-#Filtering from not-found-words
-full_table_wo_none = full_table.loc[full_table["pos1"] != "word not found"].dropna(axis = 0).reset_index()
-
-#Specify entries (f.e. Substantiv, masculin -> Substantiv | masculin)
-def split_pos(entry):
-    '''splitting POS-names to specify'''
-    new = entry.split(', ', 1)
-    return new
-
-new_pos1 = full_table_wo_none["pos1"].apply(split_pos)
-new_pos2 = full_table_wo_none["pos2"].apply(split_pos)
-
-#print(new_pos1)
-
-#Creating a DataFrame with two columns for POS1
-new_pos1 = pd.DataFrame(new_pos1.values.tolist(), columns=['pos1','pos1_add'])
-new_pos2 = pd.DataFrame(new_pos2.values.tolist(), columns=['pos2','pos2_add'])
-
-#Creating a DataFrame with colmns pos1, pos1_add, pos2, pos2_add, words
-full_table_wo_none = pd.DataFrame(dict(pos1 = new_pos1["pos1"], pos1_add = new_pos1["pos1_add"],  pos2 = new_pos2["pos2"], pos2_add = new_pos2["pos2_add"], words = full_table_wo_none["words"])).reset_index()
-
-print(full_table_wo_none.head)
-
-#Preparing the words for part-of-speech machine learning tags
+# Preparing the words for part-of-speech machine learning tags
 def split_the_word_for_morphems(word):
     '''splitting words in possible morphemes'''
     while True:
@@ -80,8 +32,8 @@ def split_the_word_for_morphems(word):
             suffix3 = word[-3:]
             suffix4 = word[-4:]
             return " ".join([prefix1, prefix2, prefix3, prefix4, suffix1, suffix2, suffix3, suffix4])
-            break
-        except:
+        except Exception as e:
+            print(e)
             prefix1 = word[0:2]
             prefix2 = word[0:3]
             suffix1 = word[-1:]
@@ -89,55 +41,45 @@ def split_the_word_for_morphems(word):
             suffix3 = word[-3:]
             return " ".join([prefix1, prefix2, suffix1, suffix2, suffix3])
 
-print(full_table_wo_none.shape)
-#Splitting the dataset in training and test data
-x_train = full_table_wo_none.loc[0:60000, "words"].apply(split_the_word_for_morphems)
-y_train = full_table_wo_none.loc[0:60000, "pos1"]
-x_test = full_table_wo_none.loc[60000:, "words"].apply(split_the_word_for_morphems)
-y_test = full_table_wo_none.loc[60000:, "pos1"]
 
-'''
-bag_of_words = list(x_train.apply(pd.Series).stack().value_counts().index)
+# Splitting the dataset in training and test data
+x_train_words, x_test_words, y_train, y_test = train_test_split(df.loc[:, "words"], df.loc[:, "pos1"], test_size=0.3, random_state=0)
 
-def vectorizing(word_with_morphemes):
-    word_vector = np.zeros(len(bag_of_words))
-    for i in range(len(bag_of_words)):
-        if bag_of_words[i] in word_with_morphemes:
-            word_vector[i] = 1
-        else:
-            word_vector[i] = 0
-    return word_vector
+# Splitting words in parts/ possible morphems
+x_train = x_train_words.apply(split_the_word_for_morphems)
+x_test = x_test_words.apply(split_the_word_for_morphems)
 
-x_train_vec = x_train.apply(vectorizing)
-print(x_train_vec)
-'''
-
-#Preparing data for machine learning tasks, vectorizing words
+# Preparing data for machine learning tasks, vectorizing words, transforming sparse matrix to ordinary one
 vectorizer = CountVectorizer()
-x_train_vec = vectorizer.fit_transform(x_train.tolist())
-x_test_vec = vectorizer.transform(x_test.tolist())
+x_train_vec = vectorizer.fit_transform(x_train.tolist()).toarray()
+x_test_vec = vectorizer.transform(x_test.tolist()).toarray()
 
-#Machine learning part. Try of several techniques
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import LinearSVC
-from sklearn.model_selection import cross_val_score
+# Creating manually dimensions to the vectors: length of the word and whether the first letter is a capital letter
+len_words_train = x_train_words.apply(lambda x: len(x))
+len_words_test = x_test_words.apply(lambda x: len(x))
 
-models = [LinearSVC(), LogisticRegression(), RandomForestClassifier()]
+isupper_train = x_train_words.apply(lambda x: 1 if x[0].isupper() is True else 0)
+isupper_test = x_test_words.apply(lambda x: 1 if x[0].isupper() is True else 0)
 
-def est_error(model):
-    '''calculating estimated error of a model'''
-    model.fit(x_train_vec, y_train)
-    y_pred = model.predict(x_test_vec)
-    comparison = pd.DataFrame(dict(words = full_table_wo_none.loc[60000:, "words"], predicted = y_pred, real = y_test))
-    error = sum(comparison.apply(lambda x: 1 if x["predicted"] != x["real"] else 0, axis = 1))/len(y_pred)
-    wrong_predictions = comparison.apply(lambda x: str(x["words"]) + " " + str(x["predicted"]) + " " + str(x["real"]) if x["predicted"] != x["real"] else None, axis = 1)
-    return error, wrong_predictions
+shapes = (len_words_train.shape[0], len_words_test.shape[0])
 
+# Combining manually created features with automatically vectorized features
+x_train_vec = csr_matrix(np.hstack([x_train_vec, len_words_train.values.reshape(shapes[0], 1), isupper_train.values.reshape(shapes[0], 1)]))
+x_test_vec = csr_matrix(np.hstack([x_test_vec, len_words_test.values.reshape(shapes[1], 1), isupper_test.values.reshape(shapes[1], 1)]))
+
+# Machine learning part. Trying several techniques
+models = [LogisticRegression(), RandomForestClassifier(), LinearSVC(C=0.01), LinearSVC(C = 10), LinearSVC(C = 0.1)]
+
+
+def est_accuracy(model):
+    '''calculating estimated accuracy of a model'''
+    model_train = model.fit(x_train_vec, y_train)
+    accuracy = model_train.score(x_test_vec, y_test)
+    return "%0.2f" % accuracy
+
+
+# Printing the accuracies of different models
 for model in models:
-    error, predictions = est_error(model)
-    print("Estimated error for " + str(model) + " is " + str(error))
-    print("Wrond predictions: " + str(predictions.dropna(axis = 0)))
-
-
-
+    startTime = datetime.now()
+    print("Accuracy of " + str(model.__class__.__name__) + " = " + str(est_accuracy(model)))
+    print("Time to implement method: " + str(datetime.now()-startTime))
